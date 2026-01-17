@@ -15,7 +15,9 @@ class UserAbilities(enum.Enum):
     STATIC_READ = 'static.read'
     CLIPBOARD_READ = 'clipboard.read'
     CLIPBOARD_WRITE = 'clipboard.write'
-    VAULT = 'vault'
+    VAULT_READ = 'vault.read'
+    VAULT_CREATE = 'vault.write'
+    VAULT_DELETE = 'vault.delete'
 
 
 class UserInfo(BaseModel):
