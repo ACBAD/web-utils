@@ -114,7 +114,14 @@ async def handleProxy(raw_mode: bool = False):
     main_group = proxy_conf['proxy-groups'][0].copy()
     main_group['name'] = 'main'
     main_group['proxies'] = filterOutseaProxies(main_group['proxies'])
-    proxy_conf['proxy-groups'] = [main_group]
+
+    cn_group = {
+        'name': '🇨🇳 中国大陆',
+        'type': 'select',
+        'url': 'http://www.apple.com/library/test/success.html',
+        'proxies': ['DIRECT']
+    }
+    proxy_conf['proxy-groups'] = [main_group, cn_group]
 
     if CUSTOM_NODES_FILE.exists():
         custom_nodes: dict = yaml.safe_load(CUSTOM_NODES_FILE.read_text())
