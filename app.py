@@ -83,7 +83,7 @@ def addNode(conf, node):
 @proxy_router.get('/',
                   name='proxy.get',
                   dependencies=[fastapi.Depends(Authoricator([UserAbilities.PROXY_READ]))])
-async def handleProxy():
+async def handleProxy(raw_mode: bool = False):
     if not UPSTREAM_URL_FILE.exists():
         logger.warning(f"Proxy configuration error: UPSTREAM_URL_FILE not found.")
         raise fastapi.HTTPException(status_code=fastapi.status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -103,7 +103,8 @@ async def handleProxy():
     except requests.RequestException as e:
         logger.exception('Failed to fetch upstream proxy config', exc_info=e)
         raise fastapi.HTTPException(status_code=fastapi.status.HTTP_503_SERVICE_UNAVAILABLE)
-
+    if raw_mode:
+        return fastapi.Response(upstream.content, media_type='application/x-yaml')
     proxy_conf = yaml.safe_load(upstream.text)
 
     if 'dns' in proxy_conf and 'fallback' in proxy_conf['dns']:
