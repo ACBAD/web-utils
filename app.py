@@ -87,7 +87,8 @@ async def fetchProxy(sub_url: str) -> bytes | None:
     try:
         async with httpx.AsyncClient(proxy=httpx.Proxy(SOCKS_PROXY_ENDPOINT),
                                      headers=headers,
-                                     max_redirects=50) as client:
+                                     max_redirects=50,
+                                     follow_redirects=True) as client:
             response = await client.get(sub_url)
         if response.status_code == 200:
             return response.content
