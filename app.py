@@ -1,7 +1,6 @@
 import os
 import re
 from pathlib import Path
-import requests
 import yaml
 from fastapi.staticfiles import StaticFiles
 from site_utils import Authoricator, UserAbilities, get_logger
@@ -9,6 +8,7 @@ import fastapi
 from fastapi import staticfiles
 import pydantic
 from dataclasses import field
+import httpx
 
 app_kwargs = {"docs_url": None, "redoc_url": None, "openapi_url": None}
 app = fastapi.FastAPI(**app_kwargs)
@@ -18,12 +18,10 @@ app.mount("/src", StaticFiles(directory="src"), name="src")
 # --- 静态配置部分 ---
 
 # --- Proxy 配置 ---
-UPSTREAM_URL_FILE = Path('proxy_url')
-if UPSTREAM_URL_FILE.exists():
-    logger.info(f'loading proxy url from {UPSTREAM_URL_FILE}')
-CUSTOM_NODES_FILE = Path('custom_nodes.yaml')
-if CUSTOM_NODES_FILE.exists():
-    logger.info(f'loading custom nodes from {CUSTOM_NODES_FILE}')
+CUSTOM_CONFIG_FILE = Path('custom_config.yaml')
+if CUSTOM_CONFIG_FILE.exists():
+    logger.info(f'loading custom nodes from {CUSTOM_CONFIG_FILE}')
+SOCKS_PROXY_ENDPOINT = 'socks5://127.0.0.1:40000'
 # --- 密钥管理器配置 ---
 VAULT_CONFIGS_DIR = Path('vault_configs')
 if VAULT_CONFIGS_DIR.exists():
@@ -80,58 +78,49 @@ def addNode(conf, node):
     conf['proxy-groups'][-1]['proxies'].append(node['name'])
 
 
+async def fetchProxy(sub_url: str) -> bytes | None:
+    headers = {
+        "User-Agent": "Clash/1.18.0",
+        "Accept-Encoding": "gzip",  # Clash 通常只发这个
+        "Connection": "keep-alive"
+    }
+    try:
+        async with httpx.AsyncClient(proxy=httpx.Proxy(SOCKS_PROXY_ENDPOINT), headers=headers) as client:
+            response = await client.get(sub_url)
+        if response.status_code == 200:
+            return response.content
+        else:
+            logger.error(f'服务器返回状态码: {response.status_code}')
+    except Exception as e:
+        logger.exception('请求过程中发生错误: ', exc_info=e)
+    return None
+
+
+@proxy_router.get('/sub',
+                  name='proxy.get.sub',
+                  dependencies=[fastapi.Depends(Authoricator([UserAbilities.PROXY_READ]))])
+async def handleSubProxies(sub_name: str = ''):
+    proxy_filename = Path('proxy_url')
+    if sub_name:
+        proxy_filename = Path(f'{sub_name}_{proxy_filename}')
+    if not proxy_filename.exists():
+        logger.warning(f"Proxy configuration error: {proxy_filename} not found.")
+        raise fastapi.HTTPException(status_code=fastapi.status.HTTP_500_INTERNAL_SERVER_ERROR)
+    upstream_content = await fetchProxy(proxy_filename.read_text().strip())
+    if upstream_content is None:
+        raise fastapi.HTTPException(status_code=fastapi.status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                    detail='详情见服务器log')
+    return fastapi.Response(upstream_content, media_type='application/x-yaml')
+
+
 @proxy_router.get('/',
                   name='proxy.get',
                   dependencies=[fastapi.Depends(Authoricator([UserAbilities.PROXY_READ]))])
-async def handleProxy(raw_mode: bool = False):
-    if not UPSTREAM_URL_FILE.exists():
-        logger.warning(f"Proxy configuration error: UPSTREAM_URL_FILE not found.")
-        raise fastapi.HTTPException(status_code=fastapi.status.HTTP_500_INTERNAL_SERVER_ERROR)
-    upstream_url = UPSTREAM_URL_FILE.read_text().strip()
-    if not upstream_url:
-        logger.warning(f"Proxy configuration error: UPSTREAM_URL_FILE is empty.")
-        raise fastapi.HTTPException(status_code=fastapi.status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    # Fetch the remote YAML file
-    try:
-        upstream = requests.get(
-            upstream_url,
-            headers={'user-agent': 'clash-verge/v1.3.8'},
-            timeout=10
-        )
-        upstream.raise_for_status()
-    except requests.RequestException as e:
-        logger.exception('Failed to fetch upstream proxy config', exc_info=e)
-        raise fastapi.HTTPException(status_code=fastapi.status.HTTP_503_SERVICE_UNAVAILABLE)
-    if raw_mode:
-        return fastapi.Response(upstream.content, media_type='application/x-yaml')
-    proxy_conf = yaml.safe_load(upstream.text)
-
-    if 'dns' in proxy_conf and 'fallback' in proxy_conf['dns']:
-        del proxy_conf['dns']['fallback']
-
-    # Build the “main” proxy group
-    main_group = proxy_conf['proxy-groups'][0].copy()
-    main_group['name'] = 'main'
-    main_group['proxies'] = filterOutseaProxies(main_group['proxies'])
-
-    cn_group = {
-        'name': '🇨🇳 中国大陆',
-        'type': 'select',
-        'url': 'http://www.apple.com/library/test/success.html',
-        'proxies': ['DIRECT']
-    }
-    proxy_conf['proxy-groups'] = [main_group, cn_group]
-
-    if CUSTOM_NODES_FILE.exists():
-        custom_nodes: dict = yaml.safe_load(CUSTOM_NODES_FILE.read_text())
-
-        for custom_node in custom_nodes['proxies']:
-            addNode(proxy_conf, custom_node)
-
-    # Serialize YAML and return
-    yaml_body = yaml.dump(proxy_conf, allow_unicode=True)
-    return fastapi.Response(yaml_body, media_type='application/x-yaml')
+async def handleProxy():
+    if not CUSTOM_CONFIG_FILE.exists():
+        logger.warning(f'自定义配置文件缺失, 请求无效')
+        raise fastapi.HTTPException(status_code=fastapi.status.HTTP_404_NOT_FOUND)
+    return fastapi.Response(CUSTOM_CONFIG_FILE.read_text(), media_type='application/x-yaml')
 
 
 app.include_router(proxy_router)
