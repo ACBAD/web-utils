@@ -106,14 +106,6 @@ async def handleProxy():
 
     proxy_conf = yaml.safe_load(upstream.text)
 
-    # Minimal ruleset
-    proxy_conf['rules'] = [
-        'RULE-SET,AntiAd,REJECT',
-        'GEOIP,LAN,DIRECT',
-        'GEOIP,CN,DIRECT',
-        'MATCH,main'
-    ]
-
     if 'dns' in proxy_conf and 'fallback' in proxy_conf['dns']:
         del proxy_conf['dns']['fallback']
 
